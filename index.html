@@ -70,6 +70,17 @@ tbody td{padding:6px 9px;vertical-align:middle;white-space:nowrap;}
 @keyframes sp{to{transform:rotate(360deg);}}
 .err{color:var(--rd);font-size:.78rem;padding:8px 0;}
 .rcount{font-size:.76rem;color:var(--mu);}
+/* OPS STATUS */
+.opsgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:14px;}
+.opschip{background:var(--bg);border:1px solid var(--bd);border-radius:9px;padding:12px 14px;cursor:pointer;
+  transition:border-color .15s,background .15s;}
+.opschip:hover{border-color:var(--oc,var(--cy));}
+.opschip.on{border-color:var(--oc,var(--cy));background:rgba(6,182,212,.08);}
+.opschip .olb{font-size:.68rem;color:var(--mu);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;}
+.opschip .ov{font-size:1.4rem;font-weight:700;font-family:monospace;color:var(--oc,var(--cy));}
+.oc-open{--oc:var(--mu);}.oc-process{--oc:var(--am);}.oc-closed{--oc:var(--gn);}
+.oc-assign{--oc:var(--pu);}.oc-pending{--oc:var(--pk);}.oc-alert{--oc:var(--rd);}
+.opsdet-table{font-size:.76rem;margin-top:4px;}
 </style>
 </head>
 <body>
@@ -119,6 +130,13 @@ tbody td{padding:6px 9px;vertical-align:middle;white-space:nowrap;}
     <label>Search (Batch / Picker / Packer)
       <input class="fi" id="fSearch" placeholder="type to search...">
     </label>
+    <label>View
+      <select class="sel" id="fView">
+        <option value="all">All</option>
+        <option value="picking">Picking</option>
+        <option value="packing">Packing</option>
+      </select>
+    </label>
     <button class="btn bc ml" onclick="loadChannel(true)">🔄 Refresh</button>
     <button class="btn bg" onclick="downloadCSV()">⬇ CSV</button>
   </div>
@@ -132,6 +150,12 @@ tbody td{padding:6px 9px;vertical-align:middle;white-space:nowrap;}
     <div class="cw"><canvas id="chart"></canvas></div>
   </div>
 
+  <div class="panel" id="opsPanel">
+    <h2>Operations Status</h2>
+    <div class="opsgrid" id="opsChips"></div>
+    <div id="opsDetail"></div>
+  </div>
+
   <div class="panel">
     <h2 style="display:flex;justify-content:space-between;align-items:center;">
       <span>Records — <span id="chLabel">Last 7 Days</span></span>
@@ -142,11 +166,11 @@ tbody td{padding:6px 9px;vertical-align:middle;white-space:nowrap;}
         <thead>
           <tr>
             <th>#</th><th>Date</th><th>Shift</th><th>Type</th><th>Batch/Picklist No</th>
-            <th>Orders</th><th>Qty</th><th>Picker</th><th>Picking Status</th>
-            <th>Packing Start</th><th>Packing Complete</th><th>Packer</th><th>Packing Status</th><th>Remarks</th>
+            <th>Orders</th><th>Qty</th><th>Picker</th><th>Picking Status</th><th>Picking Elapsed</th>
+            <th>Packing Start</th><th>Packing Complete</th><th>Packer</th><th>Packing Status</th><th>Packing Elapsed</th><th>Remarks</th>
           </tr>
         </thead>
-        <tbody id="tbody"><tr><td colspan="14" class="nd">Loading...</td></tr></tbody>
+        <tbody id="tbody"><tr><td colspan="16" class="nd">Loading...</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -212,6 +236,8 @@ function classify(label){
   if(l.includes('packing complete')) return 'packComplete';
   if(l.includes('scanner name') || l.includes('packer name')) return 'packerName';
   if(l.includes('picker name') || l === 'name') return 'pickerName';
+  if(l.includes('picking time')) return 'pickDuration';
+  if(l.includes('packing time') && !l.includes('status')) return 'packDuration';
   if(l.includes('orders count')) return 'ordersCount';
   if(l.includes('qty')) return 'qty';
   if(l.includes('tote')) return 'tote';
@@ -219,6 +245,44 @@ function classify(label){
   if(l.includes('channel') || l.includes('chanal')) return 'channel';
   if(l.includes('remarks')) return 'remarks';
   if(l === 'date') return 'date';
+  return null;
+}
+
+// ══════════════════════════════════════
+// TIME HELPERS — parse gviz date/time-of-day cells, compute elapsed duration
+// ══════════════════════════════════════
+function cellToMillis(cell){
+  if(!cell || cell.v===undefined || cell.v===null) return null;
+  const v = cell.v;
+  if(Array.isArray(v)){ // TIME_OF_DAY: [h,m,s,ms]
+    return ((v[0]||0)*3600 + (v[1]||0)*60 + (v[2]||0))*1000 + (v[3]||0);
+  }
+  if(typeof v === 'string' && v.startsWith('Date(')){
+    const m = v.match(/Date\((\d+),(\d+),(\d+)(?:,(\d+),(\d+),(\d+)(?:,(\d+))?)?\)/);
+    if(m) return new Date(+m[1],+m[2],+m[3],+(m[4]||0),+(m[5]||0),+(m[6]||0),+(m[7]||0)).getTime();
+  }
+  return null;
+}
+function calcElapsed(cellA, cellB){
+  const a = cellToMillis(cellA), b = cellToMillis(cellB);
+  if(a===null || b===null) return '';
+  let diff = b - a;
+  if(diff < 0) diff += 24*3600*1000; // crossed midnight (time-of-day only)
+  const totalMin = Math.round(diff/60000);
+  const h = Math.floor(totalMin/60), m = totalMin%60;
+  return (h?h+' Hrs ':'') + m + ' Min';
+}
+// combine a row's Date with a TIME_OF_DAY or DATETIME cell to get a real, comparable timestamp
+function combineDateTime(dayDate, cell){
+  if(!cell || cell.v===undefined || cell.v===null || !dayDate) return null;
+  const v = cell.v;
+  if(Array.isArray(v)){
+    return new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), v[0]||0, v[1]||0, v[2]||0, v[3]||0);
+  }
+  if(typeof v === 'string' && v.startsWith('Date(')){
+    const m = v.match(/Date\((\d+),(\d+),(\d+)(?:,(\d+),(\d+),(\d+)(?:,(\d+))?)?\)/);
+    if(m) return new Date(+m[1],+m[2],+m[3],+(m[4]||0),+(m[5]||0),+(m[6]||0),+(m[7]||0));
+  }
   return null;
 }
 
@@ -259,10 +323,17 @@ async function fetchChannelData(channel){
   if(!data || !data.table || !data.table.cols) return [];
   const cols = data.table.cols.map(c=>c.label||'');
   const fieldIdx = {};
+  let prevKey = null;
   cols.forEach((label,i)=>{
     if(i===0) return; // col A reserved for order type
-    const key = classify(label);
+    let key = classify(label);
+    // some tabs have an unlabeled elapsed-time column right after the Name column
+    if(!key && !label.trim()){
+      if(prevKey==='pickerName') key='pickDuration';
+      else if(prevKey==='packerName') key='packDuration';
+    }
     if(key && !(key in fieldIdx)) fieldIdx[key]=i;
+    if(key) prevKey = key;
   });
   const rows = data.table.rows||[];
   const out = [];
@@ -298,8 +369,22 @@ async function fetchChannelData(channel){
       packComplete: fieldIdx.packComplete!==undefined ? gf(fieldIdx.packComplete) : '',
       packerName: fieldIdx.packerName!==undefined ? gf(fieldIdx.packerName) : '',
       packingStatus: fieldIdx.packingStatus!==undefined ? String(gf(fieldIdx.packingStatus)||'').trim() : '',
+      pickDuration: fieldIdx.pickDuration!==undefined ? gf(fieldIdx.pickDuration) : '',
+      packDuration: fieldIdx.packDuration!==undefined ? gf(fieldIdx.packDuration) : '',
+      pickAssignRaw: fieldIdx.pickAssign!==undefined ? get(fieldIdx.pickAssign) : null,
+      pickCompleteRaw: fieldIdx.pickComplete!==undefined ? get(fieldIdx.pickComplete) : null,
+      packStartRaw: fieldIdx.packStart!==undefined ? get(fieldIdx.packStart) : null,
+      packCompleteRaw: fieldIdx.packComplete!==undefined ? get(fieldIdx.packComplete) : null,
       remarks: fieldIdx.remarks!==undefined ? gf(fieldIdx.remarks) : ''
     };
+    // fallback: if sheet has no elapsed-time text, compute from start/complete timestamps
+    if(!rec.pickDuration) rec.pickDuration = calcElapsed(rec.pickAssignRaw, rec.pickCompleteRaw);
+    if(!rec.packDuration) rec.packDuration = calcElapsed(rec.packStartRaw, rec.packCompleteRaw);
+    // real comparable timestamps (date + time), for ops-status age checks
+    rec.pickAssignDT = combineDateTime(rec.date, rec.pickAssignRaw);
+    rec.pickCompleteDT = combineDateTime(rec.date, rec.pickCompleteRaw);
+    rec.packStartDT = combineDateTime(rec.date, rec.packStartRaw);
+    rec.packCompleteDT = combineDateTime(rec.date, rec.packCompleteRaw);
     out.push(rec);
   });
   return out;
@@ -312,7 +397,7 @@ async function loadChannel(force){
   const sel = document.getElementById('fChannel').value;
   const statusBox = document.getElementById('statusBox');
   const fetchinfo = document.getElementById('fetchinfo');
-  document.getElementById('tbody').innerHTML = '<tr><td colspan="14" class="nd">Loading...</td></tr>';
+  document.getElementById('tbody').innerHTML = '<tr><td colspan="16" class="nd">Loading...</td></tr>';
 
   try{
     if(sel === '__all__'){
@@ -340,7 +425,7 @@ async function loadChannel(force){
     render();
   } catch(e){
     statusBox.innerHTML = '<div class="err">Fetch error: '+e.message+' — sheet ya tab ka naam check karo, ya sheet public "Anyone with link can view" hai ya nahi.</div>';
-    document.getElementById('tbody').innerHTML = '<tr><td colspan="14" class="nd">Error loading data</td></tr>';
+    document.getElementById('tbody').innerHTML = '<tr><td colspan="16" class="nd">Error loading data</td></tr>';
   }
 }
 
@@ -371,9 +456,81 @@ function applyFilters(){
   });
 }
 
+function applyBaseFilters(){
+  const shift = document.getElementById('fShift').value;
+  const type = document.getElementById('fType').value;
+  const search = document.getElementById('fSearch').value.trim().toLowerCase();
+  return currentRows.filter(r=>{
+    if(shift && r.shift.toLowerCase()!==shift) return false;
+    if(type && r.orderType.toLowerCase()!==type) return false;
+    if(search){
+      const hay = (r.batchNo+' '+r.pickerName+' '+r.packerName).toLowerCase();
+      if(!hay.includes(search)) return false;
+    }
+    return true;
+  });
+}
+
+// ══════════════════════════════════════
+// OPS STATUS CATEGORIES (mirrors Picker Ops Board logic)
+// ══════════════════════════════════════
+const OPS_DEFS = [
+  {key:'open', grp:'picking', cls:'oc-open', label:'Open — Not Yet Assigned',
+    test:r=> !r.pickAssignDT,
+    cols:['batchNo','ordersCount','qty']},
+  {key:'process', grp:'picking', cls:'oc-process', label:'Under Process',
+    test:r=> !!r.pickAssignDT && !r.pickCompleteDT,
+    cols:['batchNo','pickerName','ordersCount','qty']},
+  {key:'closed', grp:'picking', cls:'oc-closed', label:'Closed — Batch-wise Closing Time',
+    test:r=> r.pickingStatus.toLowerCase().includes('done') || !!r.pickCompleteDT,
+    cols:['batchNo','pickerName','ordersCount','qty']},
+  {key:'assignPending', grp:'packing', cls:'oc-assign', label:'Packing Assign Pending',
+    test:r=> !!r.pickCompleteDT && !r.packStartDT && (Date.now()-r.pickCompleteDT.getTime())>=30*60*1000,
+    cols:['batchNo','qty']},
+  {key:'packPending', grp:'packing', cls:'oc-pending', label:'Packing Pending',
+    test:r=> r.pickingStatus.toLowerCase().includes('done') && !r.packingStatus.toLowerCase().includes('done'),
+    cols:['batchNo','packerName','qty']},
+  {key:'incompleteAlert', grp:'packing', cls:'oc-alert', label:'⚠ Incomplete Packing — 1:15+',
+    test:r=> !!r.packStartDT && !r.packingStatus.toLowerCase().includes('done') && (Date.now()-r.packStartDT.getTime())>=75*60*1000,
+    cols:['batchNo','packerName','qty']}
+];
+const OPS_COL_LABEL = {batchNo:'Batch/Picklist No', ordersCount:'Orders', qty:'Qty', pickerName:'Picker', packerName:'Packer'};
+let selectedOps = null;
+
+function renderOps(baseRows){
+  const view = document.getElementById('fView').value;
+  const defs = OPS_DEFS.filter(d=> view==='all' || d.grp===view);
+  const chipsEl = document.getElementById('opsChips');
+  chipsEl.innerHTML = defs.map(d=>{
+    const count = baseRows.filter(d.test).length;
+    return '<div class="opschip '+d.cls+(selectedOps===d.key?' on':'')+'" onclick="toggleOps(\''+d.key+'\')">'+
+      '<div class="olb">'+d.label+'</div><div class="ov">'+count+'</div></div>';
+  }).join('');
+  renderOpsDetail(baseRows);
+}
+function toggleOps(key){
+  selectedOps = (selectedOps===key) ? null : key;
+  render();
+}
+function renderOpsDetail(baseRows){
+  const det = document.getElementById('opsDetail');
+  if(!selectedOps){ det.innerHTML=''; return; }
+  const d = OPS_DEFS.find(x=>x.key===selectedOps);
+  if(!d){ det.innerHTML=''; return; }
+  const rows = baseRows.filter(d.test).sort((a,b)=>b.date-a.date);
+  if(!rows.length){ det.innerHTML = '<div class="nd">Koi record nahi is category me</div>'; return; }
+  const cols = d.cols;
+  det.innerHTML = '<div class="tw"><table class="opsdet-table"><thead><tr><th>#</th><th>Date</th>'+
+    cols.map(c=>'<th>'+OPS_COL_LABEL[c]+'</th>').join('')+'</tr></thead><tbody>'+
+    rows.map((r,i)=>'<tr><td class="tm" style="color:var(--mu)">'+(i+1)+'</td><td class="tm">'+r.dateStr+'</td>'+
+      cols.map(c=>'<td>'+(r[c]||'—')+'</td>').join('')+'</tr>').join('')+
+    '</tbody></table></div>';
+}
+
 function render(){
   const rows = applyFilters();
   document.getElementById('rcount').textContent = rows.length+' records';
+  renderOps(applyBaseFilters());
 
   // stats
   const pickDoneCount = rows.filter(r=>r.pickingStatus.toLowerCase().includes('done')).length;
@@ -416,7 +573,7 @@ function render(){
   const tb = document.getElementById('tbody');
   const sorted = [...rows].sort((a,b)=>b.date-a.date);
   if(!sorted.length){
-    tb.innerHTML = '<tr><td colspan="14" class="nd">Koi record nahi mila</td></tr>';
+    tb.innerHTML = '<tr><td colspan="16" class="nd">Koi record nahi mila</td></tr>';
     return;
   }
   const statusBadge = (s, positiveWord)=>{
@@ -435,10 +592,12 @@ function render(){
     '<td>'+(r.qty||'—')+'</td>'+
     '<td>'+(r.pickerName||'—')+'</td>'+
     '<td>'+statusBadge(r.pickingStatus)+'</td>'+
+    '<td class="tm" style="font-size:.72rem;color:var(--am)">'+(r.pickDuration||'—')+'</td>'+
     '<td class="tm" style="font-size:.72rem">'+(r.packStart||'—')+'</td>'+
     '<td class="tm" style="font-size:.72rem">'+(r.packComplete||'—')+'</td>'+
     '<td>'+(r.packerName||'—')+'</td>'+
     '<td>'+statusBadge(r.packingStatus)+'</td>'+
+    '<td class="tm" style="font-size:.72rem;color:var(--am)">'+(r.packDuration||'—')+'</td>'+
     '<td style="color:var(--mu);font-size:.72rem">'+(r.remarks||'')+'</td>'+
     '</tr>'
   ).join('');
@@ -454,8 +613,8 @@ function csvDL(rowsArr, filename){
 function downloadCSV(){
   const rows = applyFilters();
   if(!rows.length){ alert('Koi data nahi export karne ke liye'); return; }
-  const head = ['Channel','Date','Shift','Type','Batch/Picklist No','Orders','Qty','Picker','Picking Status','Packing Start','Packing Complete','Packer','Packing Status','Remarks'];
-  const data = rows.sort((a,b)=>b.date-a.date).map(r=>[r.channel,r.dateStr,r.shift,r.orderType,r.batchNo,r.ordersCount,r.qty,r.pickerName,r.pickingStatus,r.packStart,r.packComplete,r.packerName,r.packingStatus,r.remarks]);
+  const head = ['Channel','Date','Shift','Type','Batch/Picklist No','Orders','Qty','Picker','Picking Status','Picking Elapsed','Packing Start','Packing Complete','Packer','Packing Status','Packing Elapsed','Remarks'];
+  const data = rows.sort((a,b)=>b.date-a.date).map(r=>[r.channel,r.dateStr,r.shift,r.orderType,r.batchNo,r.ordersCount,r.qty,r.pickerName,r.pickingStatus,r.pickDuration,r.packStart,r.packComplete,r.packerName,r.packingStatus,r.packDuration,r.remarks]);
   csvDL([head,...data], 'tracker_export_'+cutoffStr()+'.csv');
 }
 
@@ -464,6 +623,7 @@ function downloadCSV(){
 // ══════════════════════════════════════
 document.getElementById('fChannel').addEventListener('change', ()=>loadChannel(false));
 ['fShift','fType','fPick','fPack'].forEach(id=>document.getElementById(id).addEventListener('change', render));
+document.getElementById('fView').addEventListener('change', render);
 document.getElementById('fSearch').addEventListener('input', render);
 
 // ══════════════════════════════════════
