@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Picking-Packing Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#0F172A;--sf:#1E293B;--sf2:#273548;--bd:#334155;
+  --cy:#06B6D4;--gn:#10B981;--am:#F59E0B;--rd:#EF4444;
+  --pu:#818CF8;--pk:#F472B6;--tx:#E2E8F0;--mu:#94A3B8;--ra:12px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--tx);font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh;}
+header{display:flex;align-items:center;justify-content:space-between;padding:12px 22px;
+  background:var(--sf);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:200;gap:10px;flex-wrap:wrap;}
+.logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:.95rem;color:var(--cy);}
+.hright{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+#clk{font-family:monospace;font-size:1rem;color:var(--cy);letter-spacing:1px;}
+.wrap{max-width:1500px;margin:0 auto;padding:18px 22px;}
+/* STATS */
+.sgrid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:18px;}
+.sc{background:var(--sf);border:1px solid var(--bd);border-radius:var(--ra);
+  padding:13px 15px;position:relative;overflow:hidden;}
+.sc::before{content:'';position:absolute;top:0;left:0;width:4px;height:100%;background:var(--ac,var(--cy));}
+.slb{font-size:.66rem;color:var(--mu);text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;}
+.sv{font-size:1.5rem;font-weight:700;font-family:monospace;}
+.s1{--ac:var(--cy);}.s2{--ac:var(--gn);}.s3{--ac:var(--am);}
+.s4{--ac:var(--pu);}.s5{--ac:var(--rd);}.s6{--ac:var(--pk);}
+/* FILTERS */
+.fbar{display:flex;gap:9px;flex-wrap:wrap;align-items:flex-end;
+  background:var(--sf);border:1px solid var(--bd);border-radius:var(--ra);
+  padding:13px 17px;margin-bottom:18px;}
+.fbar label{font-size:.73rem;color:var(--mu);display:flex;flex-direction:column;gap:3px;}
+.sel,.fi{background:var(--bg);border:1px solid var(--bd);border-radius:7px;
+  color:var(--tx);padding:7px 10px;font-size:.81rem;cursor:pointer;outline:none;}
+.fi{cursor:text;}
+.sel:focus,.fi:focus{border-color:var(--cy);}
+.btn{padding:7px 14px;border-radius:7px;border:none;cursor:pointer;font-size:.81rem;
+  font-weight:600;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;transition:opacity .2s;}
+.btn:hover{opacity:.85;}
+.bc{background:var(--cy);color:#000;}.bg{background:var(--gn);color:#000;}
+.bk{background:var(--sf2);color:var(--tx);border:1px solid var(--bd);}
+.ml{margin-left:auto;}
+.note{font-size:.72rem;color:var(--mu);margin-top:2px;}
+/* PANELS */
+.panel{background:var(--sf);border:1px solid var(--bd);border-radius:var(--ra);padding:18px;margin-bottom:18px;}
+.panel h2{font-size:.82rem;color:var(--mu);text-transform:uppercase;letter-spacing:1px;margin-bottom:14px;}
+.cw{position:relative;height:230px;}
+/* TABLE */
+.tw{overflow-x:auto;max-height:520px;overflow-y:auto;}
+table{width:100%;border-collapse:collapse;font-size:.78rem;}
+thead th{background:var(--bg);color:var(--mu);text-align:left;padding:7px 9px;
+  font-size:.64rem;text-transform:uppercase;letter-spacing:.5px;position:sticky;top:0;z-index:1;white-space:nowrap;}
+tbody tr{border-bottom:1px solid var(--bd);transition:background .15s;}
+tbody tr:hover{background:var(--sf2);}
+tbody td{padding:6px 9px;vertical-align:middle;white-space:nowrap;}
+.tm{font-family:monospace;}
+.nd{text-align:center;color:var(--mu);padding:36px 0;font-size:.83rem;}
+.badge{display:inline-block;border-radius:5px;padding:2px 7px;font-size:.7rem;font-weight:700;white-space:nowrap;}
+.bi{background:rgba(16,185,129,.18);color:var(--gn);}
+.bo{background:rgba(239,68,68,.18);color:var(--rd);}
+.bw{background:rgba(245,158,11,.18);color:var(--am);}
+.bn{background:rgba(148,163,184,.18);color:var(--mu);}
+.chtag{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.73rem;font-weight:600;
+  border:1px solid var(--bd);background:var(--bg);color:var(--mu);}
+.loading{display:flex;align-items:center;gap:8px;color:var(--mu);font-size:.8rem;padding:10px 0;}
+.spin{width:14px;height:14px;border:2px solid var(--bd);border-top-color:var(--cy);border-radius:50%;animation:sp .7s linear infinite;}
+@keyframes sp{to{transform:rotate(360deg);}}
+.err{color:var(--rd);font-size:.78rem;padding:8px 0;}
+.rcount{font-size:.76rem;color:var(--mu);}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">📦 Picking-Packing Tracker — Farrukhnagar</div>
+  <div class="hright">
+    <span id="clk"></span>
+    <span class="rcount" id="fetchinfo"></span>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="fbar">
+    <label>Channel (Client)
+      <select class="sel" id="fChannel"></select>
+    </label>
+    <label>Shift
+      <select class="sel" id="fShift">
+        <option value="">All</option>
+        <option value="day">Day</option>
+        <option value="night">Night</option>
+      </select>
+    </label>
+    <label>Order Type
+      <select class="sel" id="fType">
+        <option value="">All</option>
+        <option value="b2c">B2C</option>
+        <option value="b2b">B2B</option>
+      </select>
+    </label>
+    <label>Picking Status
+      <select class="sel" id="fPick">
+        <option value="">All</option>
+        <option value="done">Done</option>
+        <option value="pending">Pending</option>
+      </select>
+    </label>
+    <label>Packing Status
+      <select class="sel" id="fPack">
+        <option value="">All</option>
+        <option value="done">Done</option>
+        <option value="pending">Pending</option>
+      </select>
+    </label>
+    <label>Search (Batch / Picker / Packer)
+      <input class="fi" id="fSearch" placeholder="type to search...">
+    </label>
+    <button class="btn bc ml" onclick="loadChannel(true)">🔄 Refresh</button>
+    <button class="btn bg" onclick="downloadCSV()">⬇ CSV</button>
+  </div>
+
+  <div id="statusBox"></div>
+
+  <div class="sgrid" id="stats"></div>
+
+  <div class="panel">
+    <h2>Day-wise Batches (Last 7 Days)</h2>
+    <div class="cw"><canvas id="chart"></canvas></div>
+  </div>
+
+  <div class="panel">
+    <h2 style="display:flex;justify-content:space-between;align-items:center;">
+      <span>Records — <span id="chLabel">Last 7 Days</span></span>
+      <span class="rcount" id="rcount"></span>
+    </h2>
+    <div class="tw">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>Date</th><th>Shift</th><th>Type</th><th>Batch/Picklist No</th>
+            <th>Orders</th><th>Qty</th><th>Picker</th><th>Picking Status</th>
+            <th>Packing Start</th><th>Packing Complete</th><th>Packer</th><th>Packing Status</th><th>Remarks</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"><tr><td colspan="14" class="nd">Loading...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ══════════════════════════════════════
+// CONFIG
+// ══════════════════════════════════════
+const SHEET_ID = '1xdHv0_zCP1kvYYeXFvHTOh_Ca0jQn5WMMKzoc3BahBk';
+// Channel tabs (Sheet26/27/29 blank placeholders, HonasaB2C and Derma broken/#REF! — excluded)
+const CHANNELS = ['Estalio','Raymond','YogaBar','RSH','Krishna','DreamBeauty','Ozone','BellaVita',
+  'GNC','KiwiKissan','Pigeon','NUUK','Ionic','PureOrgin','Clovia','Staze','BBLunt',
+  'AllThing','WBN','Femella','NUA','SlurrpFarm'];
+
+let chartRef = null;
+let cache = {}; // channel -> records[]
+let currentRows = [];
+
+// ══════════════════════════════════════
+// CLOCK
+// ══════════════════════════════════════
+function tickClock(){
+  document.getElementById('clk').textContent = new Date().toLocaleString('en-IN',{hour12:true});
+}
+setInterval(tickClock,1000); tickClock();
+
+// ══════════════════════════════════════
+// INIT
+// ══════════════════════════════════════
+function initChannelSelect(){
+  const sel = document.getElementById('fChannel');
+  sel.innerHTML = '<option value="__all__">All Channels</option>' +
+    CHANNELS.map(c=>'<option value="'+c+'">'+c+'</option>').join('');
+  sel.value = 'Estalio';
+}
+
+function cutoffDate(){
+  const d = new Date();
+  d.setDate(d.getDate()-6);
+  d.setHours(0,0,0,0);
+  return d;
+}
+function cutoffStr(){
+  const d = cutoffDate();
+  const p = n=>String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());
+}
+
+// ══════════════════════════════════════
+// HEADER CLASSIFICATION (flexible, header-label based; column A always = order type)
+// ══════════════════════════════════════
+function classify(label){
+  const l = (label||'').toLowerCase().trim();
+  if(!l) return null;
+  if(l.includes('shift')) return 'shift';
+  if(l.includes('picking status')) return 'pickingStatus';
+  if(l.includes('packing status')) return 'packingStatus';
+  if(l.includes('picking assign') || l.includes('picking start')) return 'pickAssign';
+  if(l.includes('picking complete')) return 'pickComplete';
+  if(l.includes('packing start')) return 'packStart';
+  if(l.includes('packing complete')) return 'packComplete';
+  if(l.includes('scanner name') || l.includes('packer name')) return 'packerName';
+  if(l.includes('picker name') || l === 'name') return 'pickerName';
+  if(l.includes('orders count')) return 'ordersCount';
+  if(l.includes('qty')) return 'qty';
+  if(l.includes('tote')) return 'tote';
+  if(l.includes('pick list') || l.includes('picklist') || l.includes('batch')) return 'batchNo';
+  if(l.includes('channel') || l.includes('chanal')) return 'channel';
+  if(l.includes('remarks')) return 'remarks';
+  if(l === 'date') return 'date';
+  return null;
+}
+
+// ══════════════════════════════════════
+// GVIZ FETCH — server-side filtered to last 7 days (column B = Date across all tabs)
+// ══════════════════════════════════════
+async function gvizFetch(channel, query){
+  const url = 'https://docs.google.com/spreadsheets/d/'+SHEET_ID+'/gviz/tq?sheet='+encodeURIComponent(channel)+
+    (query ? '&tq='+encodeURIComponent(query) : '') + '&tqx=out:json';
+  const res = await fetch(url);
+  const txt = await res.text();
+  const jsonStr = txt.substring(txt.indexOf('{'), txt.lastIndexOf('}')+1);
+  return JSON.parse(jsonStr);
+}
+
+async function fetchChannelData(channel){
+  const q = "select * where B >= date '"+cutoffStr()+"'";
+  let data;
+  try{
+    data = await gvizFetch(channel, q);
+  } catch(e){ data = null; }
+  // fallback: query failed or returned nothing usable -> fetch full sheet, filter client-side
+  if(!data || !data.table || !data.table.cols || !(data.table.rows||[]).length){
+    data = await gvizFetch(channel, null);
+    if(data && data.table){
+      const cutoff = cutoffDate();
+      data.table.rows = (data.table.rows||[]).filter(r=>{
+        const cell = r.c && r.c[1];
+        if(!cell || cell.v===undefined || cell.v===null) return false;
+        if(typeof cell.v === 'string' && cell.v.startsWith('Date(')){
+          const m = cell.v.match(/Date\((\d+),(\d+),(\d+)/);
+          if(m){ const dt = new Date(+m[1],+m[2],+m[3]); return dt.getTime()>=cutoff.getTime(); }
+        }
+        return false;
+      });
+    }
+  }
+  if(!data || !data.table || !data.table.cols) return [];
+  const cols = data.table.cols.map(c=>c.label||'');
+  const fieldIdx = {};
+  cols.forEach((label,i)=>{
+    if(i===0) return; // col A reserved for order type
+    const key = classify(label);
+    if(key && !(key in fieldIdx)) fieldIdx[key]=i;
+  });
+  const rows = data.table.rows||[];
+  const out = [];
+  rows.forEach(r=>{
+    const c = r.c||[];
+    const get = i => (c[i] && (c[i].v!==undefined && c[i].v!==null)) ? c[i] : null;
+    const gf = i => { const cell=get(i); return cell ? (cell.f!==undefined && cell.f!==null ? cell.f : cell.v) : ''; };
+    const dCell = fieldIdx.date!==undefined ? get(fieldIdx.date) : get(1);
+    let dateObj = null, dateStr = '';
+    if(dCell){
+      if(typeof dCell.v === 'string' && dCell.v.startsWith('Date(')){
+        const m = dCell.v.match(/Date\((\d+),(\d+),(\d+)/);
+        if(m) dateObj = new Date(+m[1], +m[2], +m[3]);
+      } else if(dCell.v instanceof Object){ /* skip */ }
+      dateStr = dCell.f || (dateObj ? dateObj.toLocaleDateString('en-IN') : String(dCell.v));
+    }
+    if(!dateObj) return; // skip rows without a valid date
+    const orderType = gf(0) || '';
+    const batchNo = fieldIdx.batchNo!==undefined ? gf(fieldIdx.batchNo) : '';
+    const tote = fieldIdx.tote!==undefined ? gf(fieldIdx.tote) : '';
+    const rec = {
+      channel,
+      orderType: String(orderType).trim(),
+      date: dateObj,
+      dateStr,
+      shift: fieldIdx.shift!==undefined ? String(gf(fieldIdx.shift)||'').trim() : '',
+      batchNo: (tote? (tote+' / '):'') + (batchNo||''),
+      ordersCount: fieldIdx.ordersCount!==undefined ? gf(fieldIdx.ordersCount) : '',
+      qty: fieldIdx.qty!==undefined ? gf(fieldIdx.qty) : '',
+      pickerName: fieldIdx.pickerName!==undefined ? gf(fieldIdx.pickerName) : '',
+      pickingStatus: fieldIdx.pickingStatus!==undefined ? String(gf(fieldIdx.pickingStatus)||'').trim() : '',
+      packStart: fieldIdx.packStart!==undefined ? gf(fieldIdx.packStart) : '',
+      packComplete: fieldIdx.packComplete!==undefined ? gf(fieldIdx.packComplete) : '',
+      packerName: fieldIdx.packerName!==undefined ? gf(fieldIdx.packerName) : '',
+      packingStatus: fieldIdx.packingStatus!==undefined ? String(gf(fieldIdx.packingStatus)||'').trim() : '',
+      remarks: fieldIdx.remarks!==undefined ? gf(fieldIdx.remarks) : ''
+    };
+    out.push(rec);
+  });
+  return out;
+}
+
+// ══════════════════════════════════════
+// LOAD
+// ══════════════════════════════════════
+async function loadChannel(force){
+  const sel = document.getElementById('fChannel').value;
+  const statusBox = document.getElementById('statusBox');
+  const fetchinfo = document.getElementById('fetchinfo');
+  document.getElementById('tbody').innerHTML = '<tr><td colspan="14" class="nd">Loading...</td></tr>';
+
+  try{
+    if(sel === '__all__'){
+      let toFetch = CHANNELS.filter(c=>force || !cache[c]);
+      let done = 0;
+      statusBox.innerHTML = '<div class="loading"><span class="spin"></span> Fetching all channels (0/'+CHANNELS.length+')...</div>';
+      await Promise.all(toFetch.map(async ch=>{
+        try{ cache[ch] = await fetchChannelData(ch); }
+        catch(e){ cache[ch] = []; }
+        done++;
+        statusBox.innerHTML = '<div class="loading"><span class="spin"></span> Fetching all channels ('+done+'/'+toFetch.length+')...</div>';
+      }));
+      currentRows = [].concat(...CHANNELS.map(c=>cache[c]||[]));
+      document.getElementById('chLabel').textContent = 'All Channels — Last 7 Days';
+    } else {
+      if(force || !cache[sel]){
+        statusBox.innerHTML = '<div class="loading"><span class="spin"></span> Fetching '+sel+'...</div>';
+        cache[sel] = await fetchChannelData(sel);
+      }
+      currentRows = cache[sel]||[];
+      document.getElementById('chLabel').textContent = sel + ' — Last 7 Days';
+    }
+    statusBox.innerHTML = '';
+    fetchinfo.textContent = currentRows.length + ' records loaded';
+    render();
+  } catch(e){
+    statusBox.innerHTML = '<div class="err">Fetch error: '+e.message+' — sheet ya tab ka naam check karo, ya sheet public "Anyone with link can view" hai ya nahi.</div>';
+    document.getElementById('tbody').innerHTML = '<tr><td colspan="14" class="nd">Error loading data</td></tr>';
+  }
+}
+
+// ══════════════════════════════════════
+// FILTER + RENDER
+// ══════════════════════════════════════
+function applyFilters(){
+  const shift = document.getElementById('fShift').value;
+  const type = document.getElementById('fType').value;
+  const pick = document.getElementById('fPick').value;
+  const pack = document.getElementById('fPack').value;
+  const search = document.getElementById('fSearch').value.trim().toLowerCase();
+
+  return currentRows.filter(r=>{
+    if(shift && r.shift.toLowerCase()!==shift) return false;
+    if(type && r.orderType.toLowerCase()!==type) return false;
+    const pickDone = r.pickingStatus.toLowerCase().includes('done');
+    if(pick==='done' && !pickDone) return false;
+    if(pick==='pending' && pickDone) return false;
+    const packDone = r.packingStatus.toLowerCase().includes('done');
+    if(pack==='done' && !packDone) return false;
+    if(pack==='pending' && packDone) return false;
+    if(search){
+      const hay = (r.batchNo+' '+r.pickerName+' '+r.packerName).toLowerCase();
+      if(!hay.includes(search)) return false;
+    }
+    return true;
+  });
+}
+
+function render(){
+  const rows = applyFilters();
+  document.getElementById('rcount').textContent = rows.length+' records';
+
+  // stats
+  const pickDoneCount = rows.filter(r=>r.pickingStatus.toLowerCase().includes('done')).length;
+  const packDoneCount = rows.filter(r=>r.packingStatus.toLowerCase().includes('done')).length;
+  const packPending = rows.filter(r=>r.pickingStatus.toLowerCase().includes('done') && !r.packingStatus.toLowerCase().includes('done')).length;
+  const totalOrders = rows.reduce((s,r)=>s+(parseFloat(r.ordersCount)||0),0);
+  const totalQty = rows.reduce((s,r)=>s+(parseFloat(r.qty)||0),0);
+  document.getElementById('stats').innerHTML =
+    '<div class="sc s1"><div class="slb">Total Batches</div><div class="sv">'+rows.length+'</div></div>'+
+    '<div class="sc s2"><div class="slb">Total Orders</div><div class="sv">'+totalOrders+'</div></div>'+
+    '<div class="sc s3"><div class="slb">Total Qty</div><div class="sv">'+totalQty+'</div></div>'+
+    '<div class="sc s4"><div class="slb">Picking Done</div><div class="sv">'+pickDoneCount+'</div></div>'+
+    '<div class="sc s5"><div class="slb">Packing Done</div><div class="sv">'+packDoneCount+'</div></div>'+
+    '<div class="sc s6"><div class="slb">Packing Pending</div><div class="sv">'+packPending+'</div></div>';
+
+  // chart — day wise, last 7 days
+  const days = [];
+  for(let i=6;i>=0;i--){
+    const d = new Date(); d.setDate(d.getDate()-i); d.setHours(0,0,0,0);
+    days.push(d);
+  }
+  const labels = days.map(d=>d.toLocaleDateString('en-IN',{day:'2-digit',month:'short'}));
+  const dayCounts = days.map(d=>rows.filter(r=>r.date.getTime()===d.getTime()).length);
+  const dayPacked = days.map(d=>rows.filter(r=>r.date.getTime()===d.getTime() && r.packingStatus.toLowerCase().includes('done')).length);
+  const ctx = document.getElementById('chart').getContext('2d');
+  if(chartRef) chartRef.destroy();
+  chartRef = new Chart(ctx,{
+    type:'bar',
+    data:{labels, datasets:[
+      {label:'Total Batches',data:dayCounts,backgroundColor:'rgba(6,182,212,.7)',borderColor:'#06B6D4',borderWidth:1,borderRadius:4},
+      {label:'Packing Done',data:dayPacked,backgroundColor:'rgba(16,185,129,.7)',borderColor:'#10B981',borderWidth:1,borderRadius:4}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:'#E2E8F0'}},tooltip:{mode:'index',intersect:false}},
+      scales:{x:{ticks:{color:'#94A3B8'},grid:{color:'rgba(51,65,85,.5)'}},
+              y:{ticks:{color:'#94A3B8',stepSize:1},grid:{color:'rgba(51,65,85,.5)'},beginAtZero:true}}}
+  });
+
+  // table
+  const tb = document.getElementById('tbody');
+  const sorted = [...rows].sort((a,b)=>b.date-a.date);
+  if(!sorted.length){
+    tb.innerHTML = '<tr><td colspan="14" class="nd">Koi record nahi mila</td></tr>';
+    return;
+  }
+  const statusBadge = (s, positiveWord)=>{
+    if(!s) return '<span class="badge bn">—</span>';
+    const cls = s.toLowerCase().includes('done') ? 'bi' : 'bw';
+    return '<span class="badge '+cls+'">'+s+'</span>';
+  };
+  tb.innerHTML = sorted.map((r,i)=>
+    '<tr>'+
+    '<td class="tm" style="color:var(--mu)">'+(i+1)+'</td>'+
+    '<td class="tm">'+r.dateStr+'</td>'+
+    '<td>'+(r.shift||'—')+'</td>'+
+    '<td><span class="chtag">'+(r.orderType||'—')+'</span></td>'+
+    '<td class="tm" style="color:var(--cy)">'+(r.batchNo||'—')+'</td>'+
+    '<td>'+(r.ordersCount||'—')+'</td>'+
+    '<td>'+(r.qty||'—')+'</td>'+
+    '<td>'+(r.pickerName||'—')+'</td>'+
+    '<td>'+statusBadge(r.pickingStatus)+'</td>'+
+    '<td class="tm" style="font-size:.72rem">'+(r.packStart||'—')+'</td>'+
+    '<td class="tm" style="font-size:.72rem">'+(r.packComplete||'—')+'</td>'+
+    '<td>'+(r.packerName||'—')+'</td>'+
+    '<td>'+statusBadge(r.packingStatus)+'</td>'+
+    '<td style="color:var(--mu);font-size:.72rem">'+(r.remarks||'')+'</td>'+
+    '</tr>'
+  ).join('');
+}
+
+function csvDL(rowsArr, filename){
+  const csv = rowsArr.map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\n');
+  const blob = new Blob([csv],{type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+function downloadCSV(){
+  const rows = applyFilters();
+  if(!rows.length){ alert('Koi data nahi export karne ke liye'); return; }
+  const head = ['Channel','Date','Shift','Type','Batch/Picklist No','Orders','Qty','Picker','Picking Status','Packing Start','Packing Complete','Packer','Packing Status','Remarks'];
+  const data = rows.sort((a,b)=>b.date-a.date).map(r=>[r.channel,r.dateStr,r.shift,r.orderType,r.batchNo,r.ordersCount,r.qty,r.pickerName,r.pickingStatus,r.packStart,r.packComplete,r.packerName,r.packingStatus,r.remarks]);
+  csvDL([head,...data], 'tracker_export_'+cutoffStr()+'.csv');
+}
+
+// ══════════════════════════════════════
+// EVENTS
+// ══════════════════════════════════════
+document.getElementById('fChannel').addEventListener('change', ()=>loadChannel(false));
+['fShift','fType','fPick','fPack'].forEach(id=>document.getElementById(id).addEventListener('change', render));
+document.getElementById('fSearch').addEventListener('input', render);
+
+// ══════════════════════════════════════
+// BOOT
+// ══════════════════════════════════════
+initChannelSelect();
+loadChannel(false);
+</script>
+</body>
+</html>
