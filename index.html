@@ -182,10 +182,14 @@ tbody td{padding:6px 9px;vertical-align:middle;white-space:nowrap;}
 // CONFIG
 // ══════════════════════════════════════
 const SHEET_ID = '1xdHv0_zCP1kvYYeXFvHTOh_Ca0jQn5WMMKzoc3BahBk';
-// Channel tabs (Sheet26/27/29 blank placeholders, HonasaB2C and Derma broken/#REF! — excluded)
-const CHANNELS = ['Estalio','Raymond','YogaBar','RSH','Krishna','DreamBeauty','Ozone','BellaVita',
-  'GNC','KiwiKissan','Pigeon','NUUK','Ionic','PureOrgin','Clovia','Staze','BBLunt',
-  'AllThing','WBN','Femella','NUA','SlurrpFarm'];
+// 🔑 Google Cloud se free API key banao (sirf "Google Sheets API" enable karke) aur yahan daalo.
+// Ye key sirf PUBLIC/"anyone with link" sheets padh sakti hai — koi security risk nahi.
+const GOOGLE_API_KEY = 'YOUR_API_KEY_HERE';
+// Fallback list — tab tak use hoti hai jab tak live tab-list Google se na mil jaaye
+// (API key missing/invalid ya internet issue ho to yahi list chalegi)
+const FALLBACK_CHANNELS = ['Estalio','Raymond','YogaBar','Derma','BBLunt','HonasaB2C','new1',
+  'Ozone','KiwiKissan','Pigeon','NUUK','Ionic','Staze','AllThing','WBN','Femella','NUA','SlurrpFarm'];
+let CHANNELS = FALLBACK_CHANNELS.slice();
 
 let chartRef = null;
 let cache = {}; // channel -> records[]
@@ -207,6 +211,29 @@ function initChannelSelect(){
   sel.innerHTML = '<option value="__all__">All Channels</option>' +
     CHANNELS.map(c=>'<option value="'+c+'">'+c+'</option>').join('');
   sel.value = 'Estalio';
+}
+
+// ══════════════════════════════════════
+// LIVE TAB LIST — reads current sheet tabs directly from the spreadsheet.
+// New tab add karo -> apne aap dashboard me aa jaata hai.
+// Tab delete karo -> apne aap hat jaata hai.
+// Tab ko "Hide sheet" karo (right-click on tab in Sheets) -> dashboard me skip ho jaata hai
+//   (isi tarah broken/blank/#REF! tabs ko dashboard se bahar rakho, bina code chhue).
+// ══════════════════════════════════════
+async function fetchSheetTabs(){
+  if(!GOOGLE_API_KEY || GOOGLE_API_KEY === 'YOUR_API_KEY_HERE') return null;
+  try{
+    const url = 'https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+
+      '?key='+encodeURIComponent(GOOGLE_API_KEY)+'&fields=sheets.properties';
+    const res = await fetch(url);
+    if(!res.ok) return null;
+    const data = await res.json();
+    const sheets = data.sheets || [];
+    const titles = sheets
+      .filter(s => s.properties && s.properties.sheetType === 'GRID' && !s.properties.hidden)
+      .map(s => s.properties.title);
+    return titles.length ? titles : null;
+  } catch(e){ return null; }
 }
 
 function cutoffDate(){
@@ -295,7 +322,13 @@ async function gvizFetch(channel, query){
   const res = await fetch(url);
   const txt = await res.text();
   const jsonStr = txt.substring(txt.indexOf('{'), txt.lastIndexOf('}')+1);
-  return JSON.parse(jsonStr);
+  const data = JSON.parse(jsonStr);
+  if(data && data.status === 'error'){
+    // e.g. tab renamed/deleted -> Google ne "invalid sheet name" jaisa error diya
+    const msg = (data.errors && data.errors[0] && data.errors[0].detailed_message) || 'gviz error';
+    throw new Error(channel+': '+msg);
+  }
+  return data;
 }
 
 async function fetchChannelData(channel){
@@ -403,15 +436,21 @@ async function loadChannel(force){
     if(sel === '__all__'){
       let toFetch = CHANNELS.filter(c=>force || !cache[c]);
       let done = 0;
+      const failedChannels = [];
       statusBox.innerHTML = '<div class="loading"><span class="spin"></span> Fetching all channels (0/'+CHANNELS.length+')...</div>';
       await Promise.all(toFetch.map(async ch=>{
         try{ cache[ch] = await fetchChannelData(ch); }
-        catch(e){ cache[ch] = []; }
+        catch(e){ cache[ch] = []; failedChannels.push(ch); }
         done++;
         statusBox.innerHTML = '<div class="loading"><span class="spin"></span> Fetching all channels ('+done+'/'+toFetch.length+')...</div>';
       }));
       currentRows = [].concat(...CHANNELS.map(c=>cache[c]||[]));
       document.getElementById('chLabel').textContent = 'All Channels — Last 7 Days';
+      if(failedChannels.length){
+        statusBox.innerHTML = '<div class="err">⚠ In channels ka data fetch fail hua: '+failedChannels.join(', ')+' — tab naam sheet me check karo.</div>';
+      } else {
+        statusBox.innerHTML = '';
+      }
     } else {
       if(force || !cache[sel]){
         statusBox.innerHTML = '<div class="loading"><span class="spin"></span> Fetching '+sel+'...</div>';
@@ -419,8 +458,8 @@ async function loadChannel(force){
       }
       currentRows = cache[sel]||[];
       document.getElementById('chLabel').textContent = sel + ' — Last 7 Days';
+      statusBox.innerHTML = '';
     }
-    statusBox.innerHTML = '';
     fetchinfo.textContent = currentRows.length + ' records loaded';
     render();
   } catch(e){
@@ -629,8 +668,21 @@ document.getElementById('fSearch').addEventListener('input', render);
 // ══════════════════════════════════════
 // BOOT
 // ══════════════════════════════════════
-initChannelSelect();
-loadChannel(false);
+async function boot(){
+  const statusBox = document.getElementById('statusBox');
+  statusBox.innerHTML = '<div class="loading"><span class="spin"></span> Sheet ke current tabs check ho rahe hain...</div>';
+  const liveTabs = await fetchSheetTabs();
+  if(liveTabs){
+    CHANNELS = liveTabs;
+    statusBox.innerHTML = '';
+  } else {
+    CHANNELS = FALLBACK_CHANNELS.slice();
+    statusBox.innerHTML = '<div class="err">⚠ Live tab-list Google se nahi mil paayi (API key check karo ya GOOGLE_API_KEY set karo) — filhaal ek fixed list use ho rahi hai jo naye/delete hue tabs ke saath apne aap update nahi hogi.</div>';
+  }
+  initChannelSelect();
+  loadChannel(false);
+}
+boot();
 </script>
 </body>
 </html>
